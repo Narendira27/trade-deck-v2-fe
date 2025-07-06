@@ -97,10 +97,10 @@ function Dashboard() {
   >(defaultDraggableColumns);
   const [isSideNavOpen, setIsSideNavOpen] = useState(false);
   const [isDashboardReady, setIsDashboardReady] = useState(false);
-  const [authChecked, setAuthChecked] = useState(false);
+  const [shouldShowLoading, setShouldShowLoading] = useState(true);
   
   const navigate = useNavigate();
-  const { loadingState, loadAllData, resetRequestStates, isLoading, hasLoaded } = useDataLoader();
+  const { loadingState, loadAllData, resetRequestStates, verifyAuthentication } = useDataLoader();
 
   // Periodic trade data updates (only after dashboard is ready)
   const updateTradeData = useCallback(() => {
@@ -123,16 +123,17 @@ function Dashboard() {
       });
   }, [isDashboardReady, setTrades]);
 
-  // Initial authentication check
+  // Initial authentication check and data loading
   useEffect(() => {
-    const checkAuth = () => {
+    const initializeDashboard = async () => {
+      // First, check if we have a token
       const auth = cookies.get("auth");
-
       if (!auth) {
         navigate("/login");
         return;
       }
 
+      // Check JWT payload for onboarding status
       try {
         const decoded = jwtDecode<MyJwtPayload>(auth);
         if (decoded.updatePassword === true) {
@@ -144,27 +145,41 @@ function Dashboard() {
         return;
       }
 
-      setAuthChecked(true);
-    };
+      // Verify authentication with the server
+      const isAuthenticated = await verifyAuthentication();
+      if (!isAuthenticated) {
+        // Authentication failed, redirect to login
+        navigate("/login");
+        return;
+      }
 
-    checkAuth();
-  }, [navigate]);
+      // If authentication failed in loading state, redirect
+      if (loadingState.authenticationFailed) {
+        navigate("/login");
+        return;
+      }
 
-  // Load data only once after auth is checked
-  useEffect(() => {
-    if (!authChecked || hasLoaded || isLoading) return;
-
-    const initializeData = async () => {
-      console.log('Starting data initialization...');
+      // Reset any previous request states and load data
+      resetRequestStates();
       const success = await loadAllData();
+      
       if (!success) {
         // If critical data loading fails, redirect to login
         navigate("/login");
       }
     };
 
-    initializeData();
-  }, [authChecked, hasLoaded, isLoading, loadAllData, navigate]);
+    initializeDashboard();
+  }, [navigate, loadAllData, resetRequestStates, verifyAuthentication, loadingState.authenticationFailed]);
+
+  // Handle authentication failures
+  useEffect(() => {
+    if (loadingState.authenticationFailed) {
+      // Clear any stored auth data and redirect
+      cookies.remove("auth");
+      navigate("/login");
+    }
+  }, [loadingState.authenticationFailed, navigate]);
 
   // Periodic data updates (only after initial loading is complete)
   useEffect(() => {
@@ -198,20 +213,26 @@ function Dashboard() {
     const criticalDataReady = 
       loadingState.chartDataReady && 
       loadingState.progress === 100 &&
-      !loadingState.error;
+      !loadingState.error &&
+      !loadingState.authenticationFailed;
 
     if (criticalDataReady) {
       setIsDashboardReady(true);
+      setShouldShowLoading(false);
       toast.success("Dashboard ready! All systems operational.");
+    } else if (loadingState.authenticationFailed) {
+      // Don't show dashboard if authentication failed
+      navigate("/login");
     } else {
       // If critical data isn't ready, show warning but still allow access
       setIsDashboardReady(true);
+      setShouldShowLoading(false);
       toast.warning("Dashboard loaded with limited functionality. Some features may not work properly.");
     }
   };
 
   // Show loading screen during initial load or if dashboard isn't ready
-  if (!authChecked || (!isDashboardReady && (isLoading || !hasLoaded))) {
+  if (shouldShowLoading || loadingState.isLoading || !isDashboardReady) {
     return (
       <LoadingScreen
         isVisible={true}

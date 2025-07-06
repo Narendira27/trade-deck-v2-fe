@@ -12,6 +12,7 @@ interface LoadingState {
   currentStep: string;
   chartDataReady: boolean;
   marketDataConnected: boolean;
+  authenticationFailed: boolean;
 }
 
 interface RequestState {
@@ -32,6 +33,7 @@ export const useDataLoader = () => {
     currentStep: "",
     chartDataReady: false,
     marketDataConnected: false,
+    authenticationFailed: false,
   });
 
   const requestStateRef = useRef<RequestState>({});
@@ -163,6 +165,47 @@ export const useDataLoader = () => {
     });
   }, [trades, optionValues]);
 
+  const verifyAuthentication = useCallback(async (): Promise<boolean> => {
+    const auth = cookies.get("auth");
+    if (!auth) {
+      setLoadingState(prev => ({ 
+        ...prev, 
+        authenticationFailed: true,
+        error: "No authentication token found",
+        currentStep: "Authentication failed"
+      }));
+      return false;
+    }
+
+    try {
+      const headers = { Authorization: `Bearer ${auth}` };
+      const authResult = await makeRequest(
+        'auth-verify',
+        () => axios.get(`${API_URL}/auth/verify`, { headers })
+      );
+
+      if (!authResult.success) {
+        setLoadingState(prev => ({ 
+          ...prev, 
+          authenticationFailed: true,
+          error: authResult.error || 'Authentication failed',
+          currentStep: "Authentication failed"
+        }));
+        return false;
+      }
+
+      return true;
+    } catch (error: any) {
+      setLoadingState(prev => ({ 
+        ...prev, 
+        authenticationFailed: true,
+        error: "Authentication verification failed",
+        currentStep: "Authentication failed"
+      }));
+      return false;
+    }
+  }, []);
+
   const loadAllData = useCallback(async () => {
     // Prevent multiple simultaneous loads
     if (isLoadingRef.current || hasLoadedRef.current) {
@@ -184,31 +227,25 @@ export const useDataLoader = () => {
       currentStep: "Authenticating User",
       chartDataReady: false,
       marketDataConnected: false,
+      authenticationFailed: false,
     });
 
     try {
-      const auth = cookies.get("auth");
-      if (!auth) {
-        throw new Error("No authentication token found");
-      }
-
-      const headers = { Authorization: `Bearer ${auth}` };
-
-      // Step 1: Verify authentication
+      // Step 1: Verify authentication first
       setLoadingState(prev => ({ 
         ...prev, 
         progress: 10, 
         currentStep: "Verifying authentication..." 
       }));
       
-      const authResult = await makeRequest(
-        'auth-verify',
-        () => axios.get(`${API_URL}/auth/verify`, { headers })
-      );
-
-      if (!authResult.success) {
-        throw new Error(authResult.error || 'Authentication failed');
+      const isAuthenticated = await verifyAuthentication();
+      if (!isAuthenticated) {
+        isLoadingRef.current = false;
+        return false;
       }
+
+      const auth = cookies.get("auth");
+      const headers = { Authorization: `Bearer ${auth}` };
 
       // Step 2: Load trade data
       setLoadingState(prev => ({ 
@@ -343,7 +380,7 @@ export const useDataLoader = () => {
       isLoadingRef.current = false;
       return false;
     }
-  }, []); // Remove all dependencies to prevent recreation
+  }, [verifyAuthentication, setTrades, setIndexData, setOptionLotSize, waitForChartData]);
 
   // Cleanup function to reset request states
   const resetRequestStates = useCallback(() => {
@@ -358,5 +395,6 @@ export const useDataLoader = () => {
     resetRequestStates,
     isLoading: isLoadingRef.current,
     hasLoaded: hasLoadedRef.current,
+    verifyAuthentication,
   };
 };

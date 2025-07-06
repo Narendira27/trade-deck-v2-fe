@@ -18,6 +18,7 @@ interface LoadingScreenProps {
     chartDataReady: boolean;
     marketDataConnected: boolean;
     error: string | null;
+    authenticationFailed?: boolean;
   };
 }
 
@@ -71,9 +72,18 @@ const LoadingScreen: React.FC<LoadingScreenProps> = ({
   useEffect(() => {
     if (!loadingState) return;
 
-    const { progress, currentStep, chartDataReady, marketDataConnected, error } = loadingState;
+    const { progress, currentStep, chartDataReady, marketDataConnected, error, authenticationFailed } = loadingState;
 
     setSteps(prev => prev.map(step => {
+      // Handle authentication failure
+      if (authenticationFailed && step.id === "auth") {
+        return { 
+          ...step, 
+          status: "error", 
+          description: "Authentication failed - redirecting to login..."
+        };
+      }
+
       // Handle global error state
       if (error && step.status === "loading") {
         return { ...step, status: "error", description: `Error: ${error}` };
@@ -135,19 +145,28 @@ const LoadingScreen: React.FC<LoadingScreenProps> = ({
     setAllCriticalStepsComplete(allComplete);
 
     // Auto-complete loading when all critical steps are done
-    if (allComplete && loadingState?.progress === 100) {
+    if (allComplete && loadingState?.progress === 100 && !loadingState?.authenticationFailed) {
       setTimeout(() => {
         onLoadingComplete();
       }, 1000);
     }
 
     // Show manual continue button if loading takes too long
-    if (loadingState?.progress === 100 && !allComplete) {
+    if (loadingState?.progress === 100 && !allComplete && !loadingState?.authenticationFailed) {
       setTimeout(() => {
         setShowManualContinue(true);
       }, 3000);
     }
-  }, [steps, loadingState?.progress, onLoadingComplete]);
+  }, [steps, loadingState?.progress, loadingState?.authenticationFailed, onLoadingComplete]);
+
+  // Handle authentication failure - auto redirect after showing error
+  useEffect(() => {
+    if (loadingState?.authenticationFailed) {
+      setTimeout(() => {
+        onLoadingComplete(); // This will trigger redirect to login
+      }, 2000);
+    }
+  }, [loadingState?.authenticationFailed, onLoadingComplete]);
 
   if (!isVisible) return null;
 
@@ -183,6 +202,7 @@ const LoadingScreen: React.FC<LoadingScreenProps> = ({
 
   const hasErrors = steps.some(step => step.status === "error");
   const hasWarnings = steps.some(step => step.status === "warning");
+  const isAuthenticationFailed = loadingState?.authenticationFailed;
 
   return (
     <div className="fixed inset-0 bg-gray-900 z-50 flex items-center justify-center">
@@ -190,15 +210,26 @@ const LoadingScreen: React.FC<LoadingScreenProps> = ({
         {/* Header */}
         <div className="text-center mb-8">
           <div className="flex justify-center mb-4">
-            <div className="bg-blue-500/10 p-4 rounded-full">
-              <BarChart2 className="h-12 w-12 text-blue-500 animate-pulse" />
+            <div className={`p-4 rounded-full ${
+              isAuthenticationFailed 
+                ? "bg-red-500/10" 
+                : "bg-blue-500/10"
+            }`}>
+              {isAuthenticationFailed ? (
+                <XCircle className="h-12 w-12 text-red-500" />
+              ) : (
+                <BarChart2 className="h-12 w-12 text-blue-500 animate-pulse" />
+              )}
             </div>
           </div>
           <h1 className="text-2xl font-bold text-white mb-2">
-            Welcome to TradeDeck
+            {isAuthenticationFailed ? "Authentication Failed" : "Welcome to TradeDeck"}
           </h1>
           <p className="text-gray-400">
-            Setting up your trading environment...
+            {isAuthenticationFailed 
+              ? "Redirecting to login page..." 
+              : "Setting up your trading environment..."
+            }
           </p>
         </div>
 
@@ -211,7 +242,9 @@ const LoadingScreen: React.FC<LoadingScreenProps> = ({
           <div className="w-full bg-gray-800 rounded-full h-2">
             <div
               className={`h-2 rounded-full transition-all duration-500 ease-out ${
-                hasErrors 
+                isAuthenticationFailed
+                  ? "bg-gradient-to-r from-red-500 to-red-600"
+                  : hasErrors 
                   ? "bg-gradient-to-r from-red-500 to-red-600" 
                   : hasWarnings
                   ? "bg-gradient-to-r from-yellow-500 to-orange-500"
@@ -223,7 +256,7 @@ const LoadingScreen: React.FC<LoadingScreenProps> = ({
         </div>
 
         {/* Connection Status */}
-        {loadingState && (
+        {loadingState && !isAuthenticationFailed && (
           <div className="mb-6 p-3 bg-gray-800/50 rounded-lg">
             <div className="flex items-center justify-between text-sm">
               <span className="text-gray-400">Market Data Connection:</span>
@@ -302,7 +335,9 @@ const LoadingScreen: React.FC<LoadingScreenProps> = ({
         {/* Current Step Indicator */}
         <div className="mt-6 text-center">
           <p className="text-sm text-gray-400">
-            {loadingState?.error ? (
+            {isAuthenticationFailed ? (
+              <span className="text-red-400">Authentication failed. Redirecting to login...</span>
+            ) : loadingState?.error ? (
               <span className="text-red-400">Error: {loadingState.error}</span>
             ) : allCriticalStepsComplete ? (
               <span className="text-green-400">All systems ready! Finalizing...</span>
@@ -313,7 +348,7 @@ const LoadingScreen: React.FC<LoadingScreenProps> = ({
         </div>
 
         {/* Manual Continue Button */}
-        {(allCriticalStepsComplete || showManualContinue) && loadingState?.progress === 100 && (
+        {(allCriticalStepsComplete || showManualContinue) && loadingState?.progress === 100 && !isAuthenticationFailed && (
           <div className="mt-6 text-center">
             <button
               onClick={onLoadingComplete}
@@ -330,7 +365,7 @@ const LoadingScreen: React.FC<LoadingScreenProps> = ({
         )}
 
         {/* Animated Dots */}
-        {!allCriticalStepsComplete && !showManualContinue && (
+        {!allCriticalStepsComplete && !showManualContinue && !isAuthenticationFailed && (
           <div className="flex justify-center mt-4 space-x-1">
             {[0, 1, 2].map((i) => (
               <div
