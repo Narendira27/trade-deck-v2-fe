@@ -140,8 +140,8 @@ export const useDataLoader = () => {
         attempts++;
         
         // Check if we have trades and at least some option values
-        const hasTradeData = trades.length > 0;
-        const hasOptionData = optionValues.length > 0;
+        const hasTradeData = Array.isArray(trades) && trades.length > 0;
+        const hasOptionData = Array.isArray(optionValues) && optionValues.length > 0;
         
         if (hasTradeData && hasOptionData) {
           setLoadingState(prev => ({ ...prev, chartDataReady: true }));
@@ -223,7 +223,10 @@ export const useDataLoader = () => {
       );
 
       if (tradesResult.success) {
-        setTrades(tradesResult.data.data);
+        // Ensure trades data is always an array
+        const tradesData = tradesResult.data.data;
+        const validTradesData = Array.isArray(tradesData) ? tradesData : [];
+        setTrades(validTradesData);
       } else {
         console.warn('Failed to load trade data:', tradesResult.error);
         // Continue with empty trades - not critical for initial load
@@ -263,7 +266,10 @@ export const useDataLoader = () => {
       );
 
       if (lotSizeResult.success) {
-        setOptionLotSize(lotSizeResult.data.data);
+        // Ensure lot size data is always an array
+        const lotSizeData = lotSizeResult.data.data;
+        const validLotSizeData = Array.isArray(lotSizeData) ? lotSizeData : [];
+        setOptionLotSize(validLotSizeData);
       } else {
         console.warn('Failed to load lot size data:', lotSizeResult.error);
         setOptionLotSize([]);
