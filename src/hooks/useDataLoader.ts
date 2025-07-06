@@ -39,6 +39,8 @@ export const useDataLoader = () => {
   const requestStateRef = useRef<RequestState>({});
   const isLoadingRef = useRef(false);
   const hasLoadedRef = useRef(false);
+  const authVerifiedRef = useRef(false);
+  const loadingPromiseRef = useRef<Promise<boolean> | null>(null);
   
   const { setTrades, setIndexData, setOptionLotSize, trades, optionValues } = useStore();
 
@@ -166,6 +168,11 @@ export const useDataLoader = () => {
   }, [trades, optionValues]);
 
   const verifyAuthentication = useCallback(async (): Promise<boolean> => {
+    // If already verified in this session, return true
+    if (authVerifiedRef.current) {
+      return true;
+    }
+
     const auth = cookies.get("auth");
     if (!auth) {
       setLoadingState(prev => ({ 
@@ -194,6 +201,8 @@ export const useDataLoader = () => {
         return false;
       }
 
+      // Mark as verified for this session
+      authVerifiedRef.current = true;
       return true;
     } catch (error: any) {
       setLoadingState(prev => ({ 
@@ -206,187 +215,194 @@ export const useDataLoader = () => {
     }
   }, []);
 
-  const loadAllData = useCallback(async () => {
-    // Prevent multiple simultaneous loads
-    if (isLoadingRef.current || hasLoadedRef.current) {
-      console.log('Data loading already in progress or completed');
-      return hasLoadedRef.current;
+  const loadAllData = useCallback(async (): Promise<boolean> => {
+    // If already loading, return the existing promise
+    if (loadingPromiseRef.current) {
+      return loadingPromiseRef.current;
     }
 
-    isLoadingRef.current = true;
-    
-    // Reset request states for a fresh load only if this is the first load
-    if (!hasLoadedRef.current) {
-      requestStateRef.current = {};
-    }
-    
-    setLoadingState({ 
-      isLoading: true, 
-      error: null, 
-      progress: 0, 
-      currentStep: "Authenticating User",
-      chartDataReady: false,
-      marketDataConnected: false,
-      authenticationFailed: false,
-    });
-
-    try {
-      // Step 1: Verify authentication first
-      setLoadingState(prev => ({ 
-        ...prev, 
-        progress: 10, 
-        currentStep: "Verifying authentication..." 
-      }));
-      
-      const isAuthenticated = await verifyAuthentication();
-      if (!isAuthenticated) {
-        isLoadingRef.current = false;
-        return false;
-      }
-
-      const auth = cookies.get("auth");
-      const headers = { Authorization: `Bearer ${auth}` };
-
-      // Step 2: Load trade data
-      setLoadingState(prev => ({ 
-        ...prev, 
-        progress: 25, 
-        currentStep: "Loading Trade Data" 
-      }));
-      
-      const tradesResult = await makeRequest(
-        'trade-data',
-        () => axios.get(`${API_URL}/user/tradeInfo`, { headers })
-      );
-
-      if (tradesResult.success) {
-        // Ensure trades data is always an array
-        const tradesData = tradesResult.data.data;
-        const validTradesData = Array.isArray(tradesData) ? tradesData : [];
-        setTrades(validTradesData);
-      } else {
-        console.warn('Failed to load trade data:', tradesResult.error);
-        // Continue with empty trades - not critical for initial load
-        setTrades([]);
-      }
-
-      // Step 3: Load option data
-      setLoadingState(prev => ({ 
-        ...prev, 
-        progress: 40, 
-        currentStep: "Loading Option Data" 
-      }));
-      
-      const optionResult = await makeRequest(
-        'option-data',
-        () => axios.get(`${API_URL}/user/optionData`, { headers })
-      );
-
-      if (optionResult.success) {
-        setIndexData(optionResult.data.data);
-      } else {
-        console.warn('Failed to load option data:', optionResult.error);
-        // Set empty data structure
-        setIndexData({ indices: [], expiry: {} });
-      }
-
-      // Step 4: Load lot sizes
-      setLoadingState(prev => ({ 
-        ...prev, 
-        progress: 55, 
-        currentStep: "Loading Lot Size Data" 
-      }));
-      
-      const lotSizeResult = await makeRequest(
-        'lot-size-data',
-        () => axios.get(`${API_URL}/user/lotSize`, { headers })
-      );
-
-      if (lotSizeResult.success) {
-        // Ensure lot size data is always an array
-        const lotSizeData = lotSizeResult.data.data;
-        const validLotSizeData = Array.isArray(lotSizeData) ? lotSizeData : [];
-        setOptionLotSize(validLotSizeData);
-      } else {
-        console.warn('Failed to load lot size data:', lotSizeResult.error);
-        setOptionLotSize([]);
-      }
-
-      // Step 5: Check market data connections (non-critical)
-      setLoadingState(prev => ({ 
-        ...prev, 
-        progress: 70, 
-        currentStep: "Connecting to Market Data" 
-      }));
-      
-      const [mainSocketHealthy, feSocketHealthy] = await Promise.all([
-        checkSocketHealth(SOCKET_MAIN, 'main-socket-health'),
-        checkSocketHealth(SOCKET_FE, 'fe-socket-health')
-      ]);
-
-      const marketDataConnected = mainSocketHealthy && feSocketHealthy;
-      setLoadingState(prev => ({ ...prev, marketDataConnected }));
-
-      if (!marketDataConnected) {
-        console.warn('Market data connection issues detected');
-        toast.warning("Market data connection limited. Some features may not work properly.");
-      }
-
-      // Step 6: Wait for initial chart data
-      setLoadingState(prev => ({ 
-        ...prev, 
-        progress: 85, 
-        currentStep: "Preparing Charts" 
-      }));
-      
-      // Give some time for socket connections to establish and initial data to flow
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      // Wait for chart data to be ready
-      await waitForChartData();
-
-      // Step 7: Final validation
-      setLoadingState(prev => ({ 
-        ...prev, 
-        progress: 100, 
-        currentStep: "Finalizing setup..." 
-      }));
-      
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      setLoadingState(prev => ({ 
-        ...prev, 
-        isLoading: false, 
-        error: null, 
-        progress: 100,
-        currentStep: "Ready!"
-      }));
-      
-      hasLoadedRef.current = true;
-      isLoadingRef.current = false;
+    // If already loaded successfully, return true
+    if (hasLoadedRef.current && !loadingState.authenticationFailed) {
       return true;
-    } catch (error: any) {
-      const errorMessage = error.response?.data?.message || error.message || "Failed to load data";
-      setLoadingState(prev => ({ 
-        ...prev, 
-        isLoading: false, 
-        error: errorMessage, 
-        progress: 0,
-        currentStep: "Error occurred",
-        chartDataReady: false,
-        marketDataConnected: false,
-      }));
-      console.error('Data loading failed:', errorMessage);
-      isLoadingRef.current = false;
-      return false;
     }
-  }, [verifyAuthentication, setTrades, setIndexData, setOptionLotSize, waitForChartData]);
+
+    // Create a new loading promise
+    const loadingPromise = (async (): Promise<boolean> => {
+      try {
+        isLoadingRef.current = true;
+        
+        setLoadingState({ 
+          isLoading: true, 
+          error: null, 
+          progress: 0, 
+          currentStep: "Authenticating User",
+          chartDataReady: false,
+          marketDataConnected: false,
+          authenticationFailed: false,
+        });
+
+        // Step 1: Verify authentication first
+        setLoadingState(prev => ({ 
+          ...prev, 
+          progress: 10, 
+          currentStep: "Verifying authentication..." 
+        }));
+        
+        const isAuthenticated = await verifyAuthentication();
+        if (!isAuthenticated) {
+          return false;
+        }
+
+        const auth = cookies.get("auth");
+        const headers = { Authorization: `Bearer ${auth}` };
+
+        // Step 2: Load trade data
+        setLoadingState(prev => ({ 
+          ...prev, 
+          progress: 25, 
+          currentStep: "Loading Trade Data" 
+        }));
+        
+        const tradesResult = await makeRequest(
+          'trade-data',
+          () => axios.get(`${API_URL}/user/tradeInfo`, { headers })
+        );
+
+        if (tradesResult.success) {
+          // Ensure trades data is always an array
+          const tradesData = tradesResult.data.data;
+          const validTradesData = Array.isArray(tradesData) ? tradesData : [];
+          setTrades(validTradesData);
+        } else {
+          console.warn('Failed to load trade data:', tradesResult.error);
+          // Continue with empty trades - not critical for initial load
+          setTrades([]);
+        }
+
+        // Step 3: Load option data
+        setLoadingState(prev => ({ 
+          ...prev, 
+          progress: 40, 
+          currentStep: "Loading Option Data" 
+        }));
+        
+        const optionResult = await makeRequest(
+          'option-data',
+          () => axios.get(`${API_URL}/user/optionData`, { headers })
+        );
+
+        if (optionResult.success) {
+          setIndexData(optionResult.data.data);
+        } else {
+          console.warn('Failed to load option data:', optionResult.error);
+          // Set empty data structure
+          setIndexData({ indices: [], expiry: {} });
+        }
+
+        // Step 4: Load lot sizes
+        setLoadingState(prev => ({ 
+          ...prev, 
+          progress: 55, 
+          currentStep: "Loading Lot Size Data" 
+        }));
+        
+        const lotSizeResult = await makeRequest(
+          'lot-size-data',
+          () => axios.get(`${API_URL}/user/lotSize`, { headers })
+        );
+
+        if (lotSizeResult.success) {
+          // Ensure lot size data is always an array
+          const lotSizeData = lotSizeResult.data.data;
+          const validLotSizeData = Array.isArray(lotSizeData) ? lotSizeData : [];
+          setOptionLotSize(validLotSizeData);
+        } else {
+          console.warn('Failed to load lot size data:', lotSizeResult.error);
+          setOptionLotSize([]);
+        }
+
+        // Step 5: Check market data connections (non-critical)
+        setLoadingState(prev => ({ 
+          ...prev, 
+          progress: 70, 
+          currentStep: "Connecting to Market Data" 
+        }));
+        
+        const [mainSocketHealthy, feSocketHealthy] = await Promise.all([
+          checkSocketHealth(SOCKET_MAIN, 'main-socket-health'),
+          checkSocketHealth(SOCKET_FE, 'fe-socket-health')
+        ]);
+
+        const marketDataConnected = mainSocketHealthy && feSocketHealthy;
+        setLoadingState(prev => ({ ...prev, marketDataConnected }));
+
+        if (!marketDataConnected) {
+          console.warn('Market data connection issues detected');
+          toast.warning("Market data connection limited. Some features may not work properly.");
+        }
+
+        // Step 6: Wait for initial chart data
+        setLoadingState(prev => ({ 
+          ...prev, 
+          progress: 85, 
+          currentStep: "Preparing Charts" 
+        }));
+        
+        // Give some time for socket connections to establish and initial data to flow
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        // Wait for chart data to be ready
+        await waitForChartData();
+
+        // Step 7: Final validation
+        setLoadingState(prev => ({ 
+          ...prev, 
+          progress: 100, 
+          currentStep: "Finalizing setup..." 
+        }));
+        
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        setLoadingState(prev => ({ 
+          ...prev, 
+          isLoading: false, 
+          error: null, 
+          progress: 100,
+          currentStep: "Ready!"
+        }));
+        
+        hasLoadedRef.current = true;
+        return true;
+      } catch (error: any) {
+        const errorMessage = error.response?.data?.message || error.message || "Failed to load data";
+        setLoadingState(prev => ({ 
+          ...prev, 
+          isLoading: false, 
+          error: errorMessage, 
+          progress: 0,
+          currentStep: "Error occurred",
+          chartDataReady: false,
+          marketDataConnected: false,
+        }));
+        console.error('Data loading failed:', errorMessage);
+        return false;
+      } finally {
+        isLoadingRef.current = false;
+        loadingPromiseRef.current = null;
+      }
+    })();
+
+    loadingPromiseRef.current = loadingPromise;
+    return loadingPromise;
+  }, [verifyAuthentication, setTrades, setIndexData, setOptionLotSize, waitForChartData, loadingState.authenticationFailed]);
 
   // Cleanup function to reset request states
   const resetRequestStates = useCallback(() => {
     requestStateRef.current = {};
     hasLoadedRef.current = false;
     isLoadingRef.current = false;
+    authVerifiedRef.current = false;
+    loadingPromiseRef.current = null;
   }, []);
 
   return {

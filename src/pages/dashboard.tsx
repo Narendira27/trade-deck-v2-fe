@@ -98,9 +98,10 @@ function Dashboard() {
   const [isSideNavOpen, setIsSideNavOpen] = useState(false);
   const [isDashboardReady, setIsDashboardReady] = useState(false);
   const [shouldShowLoading, setShouldShowLoading] = useState(true);
+  const [hasInitialized, setHasInitialized] = useState(false);
   
   const navigate = useNavigate();
-  const { loadingState, loadAllData, resetRequestStates, verifyAuthentication } = useDataLoader();
+  const { loadingState, loadAllData, resetRequestStates } = useDataLoader();
 
   // Periodic trade data updates (only after dashboard is ready)
   const updateTradeData = useCallback(() => {
@@ -115,7 +116,9 @@ function Dashboard() {
         headers: { Authorization: "Bearer " + auth },
       })
       .then((data) => {
-        setTrades(data.data.data);
+        const tradesData = data.data.data;
+        const validTradesData = Array.isArray(tradesData) ? tradesData : [];
+        setTrades(validTradesData);
       })
       .catch((error) => {
         console.warn("Failed to update trade data:", error);
@@ -125,7 +128,12 @@ function Dashboard() {
 
   // Initial authentication check and data loading
   useEffect(() => {
+    // Prevent multiple initializations
+    if (hasInitialized) return;
+
     const initializeDashboard = async () => {
+      setHasInitialized(true);
+
       // First, check if we have a token
       const auth = cookies.get("auth");
       if (!auth) {
@@ -145,32 +153,19 @@ function Dashboard() {
         return;
       }
 
-      // Verify authentication with the server
-      const isAuthenticated = await verifyAuthentication();
-      if (!isAuthenticated) {
-        // Authentication failed, redirect to login
-        navigate("/login");
-        return;
-      }
-
-      // If authentication failed in loading state, redirect
-      if (loadingState.authenticationFailed) {
-        navigate("/login");
-        return;
-      }
-
       // Reset any previous request states and load data
       resetRequestStates();
       const success = await loadAllData();
       
-      if (!success) {
-        // If critical data loading fails, redirect to login
+      if (!success || loadingState.authenticationFailed) {
+        // If critical data loading fails or auth fails, redirect to login
+        cookies.remove("auth");
         navigate("/login");
       }
     };
 
     initializeDashboard();
-  }, [navigate, loadAllData, resetRequestStates, verifyAuthentication, loadingState.authenticationFailed]);
+  }, [navigate, loadAllData, resetRequestStates, hasInitialized, loadingState.authenticationFailed]);
 
   // Handle authentication failures
   useEffect(() => {
@@ -196,7 +191,9 @@ function Dashboard() {
           headers: { Authorization: "Bearer " + auth },
         })
         .then((data) => {
-          setOptionLotSize(data.data.data);
+          const lotSizeData = data.data.data;
+          const validLotSizeData = Array.isArray(lotSizeData) ? lotSizeData : [];
+          setOptionLotSize(validLotSizeData);
         })
         .catch((error) => {
           console.warn("Failed to load lot size data:", error);
@@ -222,6 +219,7 @@ function Dashboard() {
       toast.success("Dashboard ready! All systems operational.");
     } else if (loadingState.authenticationFailed) {
       // Don't show dashboard if authentication failed
+      cookies.remove("auth");
       navigate("/login");
     } else {
       // If critical data isn't ready, show warning but still allow access
