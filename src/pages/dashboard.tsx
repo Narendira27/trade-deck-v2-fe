@@ -96,11 +96,11 @@ function Dashboard() {
     DraggableBoxColumn[]
   >(defaultDraggableColumns);
   const [isSideNavOpen, setIsSideNavOpen] = useState(false);
-  const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isDashboardReady, setIsDashboardReady] = useState(false);
+  const [authChecked, setAuthChecked] = useState(false);
   
   const navigate = useNavigate();
-  const { loadingState, loadAllData, resetRequestStates } = useDataLoader();
+  const { loadingState, loadAllData, resetRequestStates, isLoading, hasLoaded } = useDataLoader();
 
   // Periodic trade data updates (only after dashboard is ready)
   const updateTradeData = useCallback(() => {
@@ -123,9 +123,9 @@ function Dashboard() {
       });
   }, [isDashboardReady, setTrades]);
 
-  // Initial authentication and data loading
+  // Initial authentication check
   useEffect(() => {
-    const initializeDashboard = async () => {
+    const checkAuth = () => {
       const auth = cookies.get("auth");
 
       if (!auth) {
@@ -144,22 +144,27 @@ function Dashboard() {
         return;
       }
 
-      // Reset any previous request states
-      resetRequestStates();
+      setAuthChecked(true);
+    };
 
-      // Load all initial data
+    checkAuth();
+  }, [navigate]);
+
+  // Load data only once after auth is checked
+  useEffect(() => {
+    if (!authChecked || hasLoaded || isLoading) return;
+
+    const initializeData = async () => {
+      console.log('Starting data initialization...');
       const success = await loadAllData();
-      if (success) {
-        setIsInitialLoading(false);
-        // Dashboard readiness will be controlled by the loading screen
-      } else {
+      if (!success) {
         // If critical data loading fails, redirect to login
         navigate("/login");
       }
     };
 
-    initializeDashboard();
-  }, [navigate, loadAllData, resetRequestStates]);
+    initializeData();
+  }, [authChecked, hasLoaded, isLoading, loadAllData, navigate]);
 
   // Periodic data updates (only after initial loading is complete)
   useEffect(() => {
@@ -206,7 +211,7 @@ function Dashboard() {
   };
 
   // Show loading screen during initial load or if dashboard isn't ready
-  if (isInitialLoading || !isDashboardReady) {
+  if (!authChecked || (!isDashboardReady && (isLoading || !hasLoaded))) {
     return (
       <LoadingScreen
         isVisible={true}

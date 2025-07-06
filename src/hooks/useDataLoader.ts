@@ -35,6 +35,9 @@ export const useDataLoader = () => {
   });
 
   const requestStateRef = useRef<RequestState>({});
+  const isLoadingRef = useRef(false);
+  const hasLoadedRef = useRef(false);
+  
   const { setTrades, setIndexData, setOptionLotSize, trades, optionValues } = useStore();
 
   const MAX_RETRIES = 2;
@@ -161,8 +164,18 @@ export const useDataLoader = () => {
   }, [trades, optionValues]);
 
   const loadAllData = useCallback(async () => {
-    // Reset request states for a fresh load
-    requestStateRef.current = {};
+    // Prevent multiple simultaneous loads
+    if (isLoadingRef.current || hasLoadedRef.current) {
+      console.log('Data loading already in progress or completed');
+      return hasLoadedRef.current;
+    }
+
+    isLoadingRef.current = true;
+    
+    // Reset request states for a fresh load only if this is the first load
+    if (!hasLoadedRef.current) {
+      requestStateRef.current = {};
+    }
     
     setLoadingState({ 
       isLoading: true, 
@@ -306,6 +319,8 @@ export const useDataLoader = () => {
         currentStep: "Ready!"
       }));
       
+      hasLoadedRef.current = true;
+      isLoadingRef.current = false;
       return true;
     } catch (error: any) {
       const errorMessage = error.response?.data?.message || error.message || "Failed to load data";
@@ -319,18 +334,23 @@ export const useDataLoader = () => {
         marketDataConnected: false,
       }));
       console.error('Data loading failed:', errorMessage);
+      isLoadingRef.current = false;
       return false;
     }
-  }, [setTrades, setIndexData, setOptionLotSize, waitForChartData]);
+  }, []); // Remove all dependencies to prevent recreation
 
   // Cleanup function to reset request states
   const resetRequestStates = useCallback(() => {
     requestStateRef.current = {};
+    hasLoadedRef.current = false;
+    isLoadingRef.current = false;
   }, []);
 
   return {
     loadingState,
     loadAllData,
     resetRequestStates,
+    isLoading: isLoadingRef.current,
+    hasLoaded: hasLoadedRef.current,
   };
 };
